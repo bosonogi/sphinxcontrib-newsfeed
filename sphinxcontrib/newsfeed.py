@@ -8,6 +8,9 @@ from docutils import nodes
 from docutils.parsers.rst import Directive, directives
 from sphinx import addnodes
 from sphinx.util import docname_join
+from sphinx.util.matching import patfilter
+from sphinx.directives.other import glob_re
+from sphinx.domains.std import StandardDomain
 import sys, os.path, datetime, collections
 
 
@@ -19,37 +22,29 @@ class FeedDirective(Directive):
             'title': directives.unchanged,
             'link': directives.unchanged,
             'description': directives.unchanged,
+            'glob': directives.flag,
     }
 
     def run(self):
         env = self.state.document.settings.env
         output = []
-        entries = []
-        includefiles = []
-        for entry in self.content:
-            if not entry:
-                continue
-            docname = docname_join(env.docname, entry)
-            if docname not in env.found_docs:
-                output.append(self.state.document.reporter.warning(
-                    'feed contains a reference to nonexisting '
-                    'document %r' % docname, line=self.lineno))
-                env.note_reread()
-            else:
-                entries.append((None, docname))
-                includefiles.append(docname)
+
         subnode = addnodes.toctree()
         subnode['parent'] = env.docname
-        subnode['entries'] = entries
+        subnode['glob'] = 'glob' in self.options
+        subnode['entries'] = self.parse_content(subnode['glob'], output)
+        includefiles = [docname for (_, docname) in subnode['entries']]
+
         subnode['includefiles'] = includefiles
         subnode['maxdepth'] = 1
-        subnode['glob'] = False
         subnode['hidden'] = True
         subnode['numbered'] = False
         subnode['titlesonly'] = False
+
         wrappernode = nodes.compound(classes=['toctree-wrapper'])
         wrappernode.append(subnode)
         output.append(wrappernode)
+
         subnode = feed()
         subnode['entries'] = includefiles
         subnode['rss'] = self.options.get('rss')
@@ -57,7 +52,50 @@ class FeedDirective(Directive):
         subnode['link'] = self.options.get('link', '')
         subnode['description'] = self.options.get('description', '')
         output.append(subnode)
+
         return output
+
+    def parse_content(self, glob_entries, output):
+        env = self.state.document.settings.env
+        entries = []
+        references = []
+
+        if glob_entries:
+            # globbing mimics :class:`sphinx.directives.other.TocTree`
+            generated_docnames = frozenset(StandardDomain._virtual_doc_names)
+            all_docnames = env.found_docs.copy() | generated_docnames
+            all_docnames.remove(env.docname)
+
+            for entry in self.content:
+                if not entry:
+                    continue
+                if glob_re.match(entry):
+                    references.extend(sorted(
+                        docname
+                        for docname in patfilter(
+                            all_docnames, docname_join(env.docname, entry)
+                        )
+                        # don't include generated documents in globs
+                        if docname not in generated_docnames
+                    ))
+                else:
+                    references.append(entry)
+        else:
+            for entry in self.content:
+                if entry:
+                    references.append(entry)
+
+        for reference in references:
+            docname = docname_join(env.docname, reference)
+            if docname not in env.found_docs:
+                output.append(self.state.document.reporter.warning(
+                    'feed contains a reference to nonexisting '
+                    'document %r' % docname, line=self.lineno))
+                env.note_reread()
+            else:
+                entries.append((None, docname))
+
+        return entries
 
 
 class FeedEntryDirective(Directive):
