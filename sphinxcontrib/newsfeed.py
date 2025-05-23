@@ -79,14 +79,13 @@ class FeedDirective(Directive):
                         if docname not in generated_docnames
                     ))
                 else:
-                    references.append(entry)
+                    references.append(docname_join(env.docname, entry))
         else:
             for entry in self.content:
                 if entry:
-                    references.append(entry)
+                    references.append(docname_join(env.docname, entry))
 
-        for reference in references:
-            docname = docname_join(env.docname, reference)
+        for docname in references:
             if docname not in env.found_docs:
                 output.append(self.state.document.reporter.warning(
                     'feed contains a reference to nonexisting '
